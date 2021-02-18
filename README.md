@@ -12,4 +12,5 @@ y: sqrt(11+5)+3
 ```
 
 Supported functions are `sqrt log sin cos tan abs ln round ceil floor`, the software also recognizes the constants `pi e`.
+
 Numbers are expressed with the decimal comma, e.g. `55,2`, you can use the dot to split long numbers, e.g. `1.000.000`, and you can express numbers as percentages, e.g. `56%`.
