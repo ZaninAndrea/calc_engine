@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"math"
 	"strconv"
 	"strings"
@@ -10,6 +11,7 @@ import (
 type Line struct {
 	Name         string  // it's name as variable, if assigned
 	Tokens       []Token // it's tokenization
+	RawTokens    []Token // tokenization including whitespace and comment
 	Dependencies []int
 	Value        float64
 	Ast          Ast
@@ -25,15 +27,16 @@ type ExecutionGraph struct {
 	Lines          []Line
 	Variables      map[string]int // map from variable to the corresponding line
 	ExecutionOrder []int
+	SourceCode     string
 }
 
 // ParseCode parses a sourcecode into an ExecutionGraph
 func ParseCode(sourceCode string) ExecutionGraph {
-	graph := ExecutionGraph{}
+	graph := ExecutionGraph{SourceCode: sourceCode}
 
 	for _, line := range strings.Split(sourceCode, "\n") {
 		tokens := tokenizer(line)
-		graph.Lines = append(graph.Lines, Line{Tokens: tokens})
+		graph.Lines = append(graph.Lines, Line{Tokens: removeNonSemanticTokens(tokens), RawTokens: tokens})
 	}
 
 	graph.parseVariableDeclarations()
@@ -70,12 +73,21 @@ func tokenizer(source string) []Token {
 
 		// Everything after the comment marker is ignored
 		if char == '#' {
+			tokens = append(tokens, Token{"comment", source[current:]})
+
 			break
 		}
 
 		// skip whitespace
 		if char == ' ' || char == '\t' {
-			current++
+			val := ""
+
+			for (source[current] == ' ' || source[current] == '\t') && current < len(source) {
+				val += string(source[current])
+				current++
+			}
+
+			tokens = append(tokens, Token{"whitespace", val})
 			continue
 		}
 
@@ -154,6 +166,18 @@ func tokenizer(source string) []Token {
 	}
 
 	return tokens
+}
+
+func removeNonSemanticTokens(tokens []Token) []Token {
+	filteredSlice := []Token{}
+
+	for i := range tokens {
+		if tokens[i].Kind != "comment" && tokens[i].Kind != "whitespace" {
+			filteredSlice = append(filteredSlice, tokens[i])
+		}
+	}
+
+	return filteredSlice
 }
 
 // Check which lines are declaring a variable
@@ -529,4 +553,21 @@ func executeAst(ast *Ast, graph *ExecutionGraph) float64 {
 	}
 
 	panic("Unrecognized AST")
+}
+
+// ColorizedHTML returns the source code as HTML with CSS classes to tag the parsed semantic
+func (graph *ExecutionGraph) ColorizedHTML() string {
+	colorizedLines := []string{}
+
+	for _, line := range graph.Lines {
+		colorizedLine := ""
+
+		for _, token := range line.RawTokens {
+			colorizedLine += fmt.Sprintf(`<span class="calc-token-%s">%s</span>`, token.Kind, token.Value)
+		}
+
+		colorizedLines = append(colorizedLines, colorizedLine)
+	}
+
+	return strings.Join(colorizedLines, "<br/>")
 }
