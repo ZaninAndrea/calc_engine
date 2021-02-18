@@ -15,6 +15,11 @@ type Line struct {
 	Ast          Ast
 }
 
+// IsEmpty returns whether the Line contains an empty expression
+func (line *Line) IsEmpty() bool {
+	return len(line.Tokens) == 0
+}
+
 // ExecutionGraph contains the interpreted code
 type ExecutionGraph struct {
 	Lines          []Line
@@ -62,6 +67,11 @@ func tokenizer(source string) []Token {
 
 	for current < len(source) {
 		char := source[current]
+
+		// Everything after the comment marker is ignored
+		if char == '#' {
+			break
+		}
 
 		// skip whitespace
 		if char == ' ' || char == '\t' {
@@ -409,7 +419,9 @@ func parseOperator(ast *Ast, operator string) *Ast {
 // Execute computes the value of each line in the file
 func (graph *ExecutionGraph) Execute() {
 	for _, line := range graph.ExecutionOrder {
-		graph.Lines[line].Value = executeAst(&graph.Lines[line].Ast, graph)
+		if !graph.Lines[line].IsEmpty() {
+			graph.Lines[line].Value = executeAst(&graph.Lines[line].Ast, graph)
+		}
 	}
 }
 
@@ -440,6 +452,11 @@ func executeAst(ast *Ast, graph *ExecutionGraph) float64 {
 
 	if ast.Kind == "Variable" {
 		line, _ := graph.Variables[ast.Value]
+
+		if graph.Lines[line].IsEmpty() {
+			panic("Referring to a variable defined by empty expression")
+		}
+
 		return graph.Lines[line].Value
 	}
 
