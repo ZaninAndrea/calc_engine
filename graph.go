@@ -15,11 +15,17 @@ type Line struct {
 	Dependencies []int
 	Value        float64
 	Ast          Ast
+	Error        error
 }
 
 // IsEmpty returns whether the Line contains an empty expression
 func (line *Line) IsEmpty() bool {
 	return len(line.Tokens) == 0
+}
+
+// HasError returns whether the Line is invalid
+func (line *Line) HasError() bool {
+	return line.Error != nil
 }
 
 // ExecutionGraph contains the interpreted code
@@ -34,11 +40,7 @@ type ExecutionGraph struct {
 func ParseCode(sourceCode string) ExecutionGraph {
 	graph := ExecutionGraph{SourceCode: sourceCode}
 
-	for _, line := range strings.Split(sourceCode, "\n") {
-		tokens := tokenizer(line)
-		graph.Lines = append(graph.Lines, Line{Tokens: removeNonSemanticTokens(tokens), RawTokens: tokens})
-	}
-
+	graph.Tokenize(false)
 	graph.parseVariableDeclarations()
 	graph.parseLineDependencies()
 
@@ -49,14 +51,35 @@ func ParseCode(sourceCode string) ExecutionGraph {
 	graph.findExecutionOrder()
 
 	for i := range graph.Lines {
-		graph.Lines[i].Ast = parser(graph.Lines[i].Tokens, graph.Variables)
+		ast, err := parser(graph.Lines[i].Tokens, graph.Variables)
+
+		if err != nil {
+			graph.Lines[i].Error = err
+		} else {
+			graph.Lines[i].Ast = ast
+		}
+	}
+
+	return graph
+}
+
+// Tokenize computes the token representation of each line
+func (graph *ExecutionGraph) Tokenize(allowUnknown bool) *ExecutionGraph {
+	for _, line := range strings.Split(graph.SourceCode, "\n") {
+		tokens, err := tokenizer(line, allowUnknown)
+
+		if err != nil {
+			graph.Lines = append(graph.Lines, Line{Error: err})
+		} else {
+			graph.Lines = append(graph.Lines, Line{Tokens: removeNonSemanticTokens(tokens), RawTokens: tokens})
+		}
 	}
 
 	return graph
 }
 
 // Parse a line of code into a list of tokens
-func tokenizer(source string) []Token {
+func tokenizer(source string, allowUnknown bool) ([]Token, error) {
 	current := 0
 	tokens := []Token{}
 
@@ -82,7 +105,7 @@ func tokenizer(source string) []Token {
 		if char == ' ' || char == '\t' {
 			val := ""
 
-			for (source[current] == ' ' || source[current] == '\t') && current < len(source) {
+			for current < len(source) && (source[current] == ' ' || source[current] == '\t') {
 				val += string(source[current])
 				current++
 			}
@@ -162,10 +185,17 @@ func tokenizer(source string) []Token {
 		if char == '\n' {
 			panic("Tokenizer should parse single lines, \\n found")
 		}
-		panic("Unknown character " + string(char))
+
+		if allowUnknown {
+			tokens = append(tokens, Token{"unknown", string(char)})
+			current++
+
+			continue
+		}
+		return nil, fmt.Errorf("Unknown character " + string(char))
 	}
 
-	return tokens
+	return tokens, nil
 }
 
 func removeNonSemanticTokens(tokens []Token) []Token {
@@ -279,37 +309,55 @@ func recTopologicalOrder(graph *ExecutionGraph, line int, order *[]int, visited 
 	(*visited)[line] = true
 }
 
-func parser(tokens []Token, variables map[string]int) Ast {
+func parser(tokens []Token, variables map[string]int) (Ast, error) {
 	functions := []string{"sqrt", "log", "ln", "sin", "cos", "tan", "abs", "ln", "round", "ceil", "floor"}
 	constants := []string{"pi", "e"}
 
 	current := 0
 
-	var walk func() Ast
-	walk = func() Ast {
+	var walk func() (Ast, error)
+	walk = func() (Ast, error) {
+		if current >= len(tokens) {
+			return Ast{}, fmt.Errorf("Line ends unexpectedly")
+		}
+
 		token := tokens[current]
 
 		if token.Kind == "number" {
 			current++
 
-			return Ast{Kind: "NumberLiteral", Value: token.Value}
+			return Ast{Kind: "NumberLiteral", Value: token.Value}, nil
 		}
 
 		// Match all the tokens inside the parenthesis
 		if token.Kind == "paren" && token.Value == "(" {
 			current++
+
+			if current >= len(tokens) {
+				return Ast{}, fmt.Errorf("Line ends unexpectedly")
+			}
+
 			token = tokens[current]
 
 			ast := Ast{Kind: "Expression", Params: []Ast{}}
 
 			for token.Kind != "paren" || token.Value != ")" {
-				ast.Params = append(ast.Params, walk())
+				content, err := walk()
+
+				if err != nil {
+					return Ast{}, err
+				}
+				ast.Params = append(ast.Params, content)
+
+				if current >= len(tokens) {
+					return Ast{}, fmt.Errorf("Line ends unexpectedly")
+				}
 				token = tokens[current]
 			}
 
 			current++
 
-			return ast
+			return ast, nil
 		}
 
 		// literals can be constants, variables or functions
@@ -317,72 +365,107 @@ func parser(tokens []Token, variables map[string]int) Ast {
 			if containsString(constants, token.Value) {
 				current++
 
-				return Ast{Kind: "Constant", Value: token.Value}
+				return Ast{Kind: "Constant", Value: token.Value}, nil
 			}
 
 			if _, ok := variables[token.Value]; ok {
 				current++
 
-				return Ast{Kind: "Variable", Value: token.Value}
+				return Ast{Kind: "Variable", Value: token.Value}, nil
 			}
 
 			if containsString(functions, token.Value) {
 				ast := Ast{Kind: "Function", Value: token.Value}
 
 				current++
-				token = tokens[current]
-				ast.Params = []Ast{walk()}
 
-				return ast
+				if current >= len(tokens) {
+					return Ast{}, fmt.Errorf("Line ends unexpectedly")
+				}
+
+				token = tokens[current]
+
+				content, err := walk()
+
+				if err != nil {
+					return Ast{}, err
+				}
+
+				ast.Params = []Ast{content}
+
+				return ast, nil
 			}
 		}
 
 		if token.Kind == "operator" {
 			current++
 
-			return Ast{Kind: "RawOperator", Value: token.Value}
+			return Ast{Kind: "RawOperator", Value: token.Value}, nil
 		}
 
-		panic("Unrecognized syntax")
+		return Ast{}, fmt.Errorf("Unrecognized syntax")
 	}
 
 	ast := &Ast{Kind: "Expression", Params: []Ast{}}
 
 	for current < len(tokens) {
-		ast.Params = append(ast.Params, walk())
+		content, err := walk()
+
+		if err != nil {
+			return Ast{}, err
+		}
+		ast.Params = append(ast.Params, content)
 	}
 
 	for _, operator := range []string{"^", "*", "/", "-", "+"} {
-		ast = parseOperator(ast, operator)
+		newAst, err := parseOperator(ast, operator)
+
+		if err != nil {
+			return Ast{}, err
+		}
+
+		ast = newAst
 	}
 
-	return *ast
+	return *ast, nil
 }
 
-func parseOperator(ast *Ast, operator string) *Ast {
+func parseOperator(ast *Ast, operator string) (*Ast, error) {
 	if ast.Kind == "NumberLiteral" || ast.Kind == "Constant" || ast.Kind == "Variable" {
-		return ast
+		return ast, nil
 	}
 
 	if ast.Kind == "Function" {
 		if len(ast.Params) == 0 {
-			panic("Function called without argument")
+			return nil, fmt.Errorf("Function called without argument")
 		}
 
 		if ast.Params[0].Kind == "RawOperator" {
-			panic("Cannot pass operation as argument to function")
+			return nil, fmt.Errorf("Cannot pass operation as argument to function")
 		}
 
-		ast.Params = []Ast{*parseOperator(&ast.Params[0], operator)}
+		content, err := parseOperator(&ast.Params[0], operator)
+		if err != nil {
+			return nil, err
+		}
 
-		return ast
+		ast.Params = []Ast{*content}
+
+		return ast, nil
 	}
 	if ast.Kind == "Operator" {
-		firstParam := *parseOperator(&ast.Params[0], operator)
-		secondParam := *parseOperator(&ast.Params[1], operator)
-		ast.Params = []Ast{firstParam, secondParam}
+		firstParam, err1 := parseOperator(&ast.Params[0], operator)
+		secondParam, err2 := parseOperator(&ast.Params[1], operator)
 
-		return ast
+		if err1 != nil {
+			return nil, err1
+		} else if err2 != nil {
+			return nil, err2
+		}
+
+		ast.Params = []Ast{*firstParam, *secondParam}
+
+		return ast, nil
 	}
 
 	if ast.Kind == "Expression" {
@@ -392,7 +475,12 @@ func parseOperator(ast *Ast, operator string) *Ast {
 			token := ast.Params[i]
 
 			if token.Kind != "RawOperator" {
-				parsedParams = append(parsedParams, *parseOperator(&token, operator))
+				parsed, err := parseOperator(&token, operator)
+				if err != nil {
+					return nil, err
+				}
+
+				parsedParams = append(parsedParams, *parsed)
 				continue
 			} else {
 				if token.Value != operator {
@@ -402,12 +490,12 @@ func parseOperator(ast *Ast, operator string) *Ast {
 
 				// operators cannot end an expression
 				if i >= len(ast.Params)-1 {
-					panic("Cannot end expression with operation")
+					return nil, fmt.Errorf("Cannot end expression with operation")
 				}
 
 				// only - operator can start an expression
 				if len(parsedParams) == 0 && operator != "-" {
-					panic("Cannot start expression with operation")
+					return nil, fmt.Errorf("Cannot start expression with operation")
 				}
 
 				newAst := Ast{Kind: "Operator", Value: token.Value}
@@ -424,17 +512,21 @@ func parseOperator(ast *Ast, operator string) *Ast {
 				i++
 				token = ast.Params[i]
 				if token.Kind == "RawOperator" {
-					panic("Cannot have 2 operations consecutively")
+					return nil, fmt.Errorf("Cannot have 2 operations consecutively")
 				}
-				secondToken := *parseOperator(&token, operator)
 
-				newAst.Params = []Ast{firstToken, secondToken}
+				secondToken, err := parseOperator(&token, operator)
+				if err != nil {
+					return nil, err
+				}
+
+				newAst.Params = []Ast{firstToken, *secondToken}
 				parsedParams = append(parsedParams, newAst)
 			}
 		}
 
 		ast.Params = parsedParams
-		return ast
+		return ast, nil
 	}
 
 	panic("Unrecognized AST")
@@ -443,13 +535,19 @@ func parseOperator(ast *Ast, operator string) *Ast {
 // Execute computes the value of each line in the file
 func (graph *ExecutionGraph) Execute() {
 	for _, line := range graph.ExecutionOrder {
-		if !graph.Lines[line].IsEmpty() {
-			graph.Lines[line].Value = executeAst(&graph.Lines[line].Ast, graph)
+		if !graph.Lines[line].IsEmpty() && !graph.Lines[line].HasError() {
+			val, err := executeAst(&graph.Lines[line].Ast, graph)
+
+			if err != nil {
+				graph.Lines[line].Error = err
+			} else {
+				graph.Lines[line].Value = val
+			}
 		}
 	}
 }
 
-func executeAst(ast *Ast, graph *ExecutionGraph) float64 {
+func executeAst(ast *Ast, graph *ExecutionGraph) (float64, error) {
 	if ast.Kind == "NumberLiteral" {
 		raw := ast.Value
 		raw = strings.ReplaceAll(raw, ".", "")
@@ -464,24 +562,26 @@ func executeAst(ast *Ast, graph *ExecutionGraph) float64 {
 		val, err := strconv.ParseFloat(raw, 64)
 
 		if err != nil {
-			panic("Invalid number literal")
+			return 0, fmt.Errorf("Invalid number literal")
 		}
 
 		if isPercentage {
 			val /= 100
 		}
 
-		return val
+		return val, nil
 	}
 
 	if ast.Kind == "Variable" {
 		line, _ := graph.Variables[ast.Value]
 
 		if graph.Lines[line].IsEmpty() {
-			panic("Referring to a variable defined by empty expression")
+			return 0, fmt.Errorf("Referring to a variable defined by empty expression")
+		} else if graph.Lines[line].HasError() {
+			return 0, fmt.Errorf("Referring to a variable whose definition has an error")
 		}
 
-		return graph.Lines[line].Value
+		return graph.Lines[line].Value, nil
 	}
 
 	if ast.Kind == "Expression" {
@@ -493,49 +593,59 @@ func executeAst(ast *Ast, graph *ExecutionGraph) float64 {
 	}
 
 	if ast.Kind == "Operator" {
-		firstValue := executeAst(&ast.Params[0], graph)
-		secondValue := executeAst(&ast.Params[1], graph)
+		firstValue, err1 := executeAst(&ast.Params[0], graph)
+		secondValue, err2 := executeAst(&ast.Params[1], graph)
+
+		if err1 != nil {
+			return 0, err1
+		} else if err2 != nil {
+			return 0, err2
+		}
 
 		switch ast.Value {
 		case "+":
-			return firstValue + secondValue
+			return firstValue + secondValue, nil
 		case "-":
-			return firstValue - secondValue
+			return firstValue - secondValue, nil
 		case "*":
-			return firstValue * secondValue
+			return firstValue * secondValue, nil
 		case "/":
-			return firstValue / secondValue
+			return firstValue / secondValue, nil
 		case "^":
-			return math.Pow(firstValue, secondValue)
+			return math.Pow(firstValue, secondValue), nil
 		default:
 			panic("Unknown operation")
 		}
 	}
 
 	if ast.Kind == "Function" {
-		value := executeAst(&ast.Params[0], graph)
+		value, err := executeAst(&ast.Params[0], graph)
+
+		if err != nil {
+			return 0, err
+		}
 
 		switch ast.Value {
 		case "sqrt":
-			return math.Sqrt(value)
+			return math.Sqrt(value), nil
 		case "log":
-			return math.Log10(value)
+			return math.Log10(value), nil
 		case "ln":
-			return math.Log(value)
+			return math.Log(value), nil
 		case "sin":
-			return math.Sin(value)
+			return math.Sin(value), nil
 		case "cos":
-			return math.Cos(value)
+			return math.Cos(value), nil
 		case "tan":
-			return math.Tan(value)
+			return math.Tan(value), nil
 		case "abs":
-			return math.Abs(value)
+			return math.Abs(value), nil
 		case "round":
-			return math.Round(value)
+			return math.Round(value), nil
 		case "ceil":
-			return math.Ceil(value)
+			return math.Ceil(value), nil
 		case "floor":
-			return math.Floor(value)
+			return math.Floor(value), nil
 		default:
 			panic("Unknown function")
 		}
@@ -544,9 +654,9 @@ func executeAst(ast *Ast, graph *ExecutionGraph) float64 {
 	if ast.Kind == "Constant" {
 		switch ast.Value {
 		case "pi":
-			return math.Pi
+			return math.Pi, nil
 		case "e":
-			return math.E
+			return math.E, nil
 		default:
 			panic("Unknown constant")
 		}

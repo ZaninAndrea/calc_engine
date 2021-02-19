@@ -45,19 +45,22 @@ func main() {
 		}
 	}
 
-	graph := ParseCode(sourceCode)
-
 	if command == "execute" {
+		graph := ParseCode(sourceCode)
 		graph.Execute()
 
 		for i := range graph.Lines {
-			if graph.Lines[i].IsEmpty() {
+			if graph.Lines[i].HasError() {
+				fmt.Println("!")
+			} else if graph.Lines[i].IsEmpty() {
 				fmt.Println("X")
 			} else {
 				fmt.Println(graph.Lines[i].Value)
 			}
 		}
 	} else if command == "colorize" {
+		graph := ExecutionGraph{SourceCode: sourceCode}
+		graph.Tokenize(true)
 		fmt.Println(graph.ColorizedHTML())
 	}
 }
