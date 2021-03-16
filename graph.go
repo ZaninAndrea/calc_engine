@@ -668,12 +668,25 @@ func executeAst(ast *Ast, graph *ExecutionGraph) (float64, error) {
 // ColorizedHTML returns the source code as HTML with CSS classes to tag the parsed semantic
 func (graph *ExecutionGraph) ColorizedHTML() string {
 	colorizedLines := []string{}
+	functions := []string{"sqrt", "log", "ln", "sin", "cos", "tan", "abs", "ln", "round", "ceil", "floor"}
+	constants := []string{"pi", "e"}
 
 	for _, line := range graph.Lines {
 		colorizedLine := ""
 
 		for _, token := range line.RawTokens {
-			colorizedLine += fmt.Sprintf(`<span class="calc-token-%s">%s</span>`, token.Kind, token.Value)
+			if token.Kind != "literal" {
+				colorizedLine += fmt.Sprintf(`<span class="calc-token-%s">%s</span>`, token.Kind, token.Value)
+			} else {
+				switch {
+				case containsString(functions, token.Value):
+					colorizedLine += fmt.Sprintf(`<span class="calc-token-%s">%s</span>`, "function", token.Value)
+				case containsString(constants, token.Value):
+					colorizedLine += fmt.Sprintf(`<span class="calc-token-%s">%s</span>`, "constant", token.Value)
+				default:
+					colorizedLine += fmt.Sprintf(`<span class="calc-token-%s">%s</span>`, "literal", token.Value)
+				}
+			}
 		}
 
 		colorizedLines = append(colorizedLines, colorizedLine)

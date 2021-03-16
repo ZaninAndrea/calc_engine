@@ -55,7 +55,7 @@ func main() {
 			} else if graph.Lines[i].IsEmpty() {
 				fmt.Println("X")
 			} else {
-				fmt.Println(graph.Lines[i].Value)
+				fmt.Printf("%f\n", roundToDecimal(graph.Lines[i].Value, 13))
 			}
 		}
 	} else if command == "colorize" {
