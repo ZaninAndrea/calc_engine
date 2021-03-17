@@ -341,12 +341,16 @@ func parser(tokens []Token, variables map[string]int) (Ast, error) {
 			return Ast{Kind: "UnitNumberLiteral", Value: token.Value}, nil
 		}
 
-		// literals can be constants, variables or functions
+		// literals can be known units or unknown units
 		if token.Kind == "literal" {
 			if val, ok := UnitAliasesMap[token.Value]; ok {
 				current++
 
 				return Ast{Kind: "FundamentalUnit", Value: val}, nil
+			} else {
+				current++
+
+				return Ast{Kind: "CustomUnit", Value: token.Value}, nil
 			}
 		}
 
@@ -529,7 +533,6 @@ func parser(tokens []Token, variables map[string]int) (Ast, error) {
 func parseUnitAst(ast Ast) (CompositeUnit, error) {
 	cu := CompositeUnit{}
 
-	// TODO: handle 1/s
 	// TODO: give error on m^2^3
 
 	exponentSign := float64(1)
@@ -541,6 +544,19 @@ func parseUnitAst(ast Ast) (CompositeUnit, error) {
 
 		if token.Kind == "FundamentalUnit" {
 			cu.UnitsList = append(cu.UnitsList, UnitExponent{UnitTable[token.Value], exponentSign})
+			curr++
+			continue
+		}
+
+		if token.Kind == "CustomUnit" {
+			cu.UnitsList = append(cu.UnitsList, UnitExponent{FundamentalUnit{
+				ID:               token.Value,
+				DisplayValue:     token.Value,
+				Aliases:          []string{token.Value},
+				BaseUnit:         token.Value,
+				ConversionFactor: 1,
+				ConversionShift:  0,
+			}, exponentSign})
 			curr++
 			continue
 		}
@@ -568,6 +584,11 @@ func parseUnitAst(ast Ast) (CompositeUnit, error) {
 			} else {
 				return CompositeUnit{}, fmt.Errorf("Failed to parse unit expression")
 			}
+		}
+
+		if token.Kind == "UnitNumberLiteral" && len(cu.UnitsList) == 0 {
+			curr++
+			continue
 		}
 
 		return CompositeUnit{}, fmt.Errorf("Failed to parse unit expression")
@@ -803,16 +824,41 @@ func executeAst(ast *Ast, graph *ExecutionGraph) (float64, CompositeUnit, error)
 
 		switch ast.Value {
 		case "sqrt":
-			return math.Sqrt(value), unit, nil
+			return math.Sqrt(value), CompositeUnitExponentiation(unit, 0.5), nil
 		case "log":
 			return math.Log10(value), unit, nil
 		case "ln":
 			return math.Log(value), unit, nil
 		case "sin":
+			if unit.String() == "rad" {
+				return math.Sin(value), CompositeUnit{}, nil
+			}
+			if unit.String() == "deg" {
+				value = ConvertFundamentalUnits(value, UnitTable["degrees"], UnitTable["radians"], 1)
+
+				return math.Sin(value), CompositeUnit{}, nil
+			}
+
 			return math.Sin(value), unit, nil
 		case "cos":
+			if unit.String() == "rad" {
+				return math.Cos(value), CompositeUnit{}, nil
+			}
+			if unit.String() == "deg" {
+				value = ConvertFundamentalUnits(value, UnitTable["degrees"], UnitTable["radians"], 1)
+				return math.Cos(value), CompositeUnit{}, nil
+			}
+
 			return math.Cos(value), unit, nil
 		case "tan":
+			if unit.String() == "rad" {
+				return math.Tan(value), CompositeUnit{}, nil
+			}
+			if unit.String() == "deg" {
+				value = ConvertFundamentalUnits(value, UnitTable["degrees"], UnitTable["radians"], 1)
+				return math.Tan(value), CompositeUnit{}, nil
+			}
+
 			return math.Tan(value), unit, nil
 		case "abs":
 			return math.Abs(value), unit, nil

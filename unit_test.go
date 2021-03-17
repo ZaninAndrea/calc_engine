@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"math"
+	"testing"
+)
 
 func TestCompositeUnitString(t *testing.T) {
 	cu := CompositeUnit{
@@ -88,5 +91,10 @@ func TestFundamentalUnitConversion(t *testing.T) {
 	got = ConvertFundamentalUnits(1, UnitTable["meter"], UnitTable["centimeter"], 2)
 	if got != 10000 {
 		t.Errorf("1 m^2 should convert to 10.000 cm^2, got %f instead", got)
+	}
+
+	got = ConvertFundamentalUnits(90, UnitTable["degrees"], UnitTable["radians"], 1)
+	if got != math.Pi/2 {
+		t.Errorf("90 deg should convert to pi/2 rad, got %f instead", got)
 	}
 }

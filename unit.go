@@ -16,6 +16,7 @@ type FundamentalUnit struct {
 	ConversionShift  float64
 }
 
+// TODO: load currency conversion rates
 var UnitAliasesMap map[string]string = map[string]string{}
 var UnitTable map[string]FundamentalUnit = map[string]FundamentalUnit{
 	// metric lengths
@@ -81,9 +82,15 @@ var UnitTable map[string]FundamentalUnit = map[string]FundamentalUnit{
 	"cny": {"cny", "¥", []string{"cny", "CNY"}, "eur", 0.13, 0},
 	"cad": {"cad", "CAD", []string{"cad", "CAD"}, "eur", 1.17, 0},
 
-	// degrees (radians, ...)
-	// pressure
+	// degrees
+	"radians": {"radians", "rad", []string{"rad", "radians"}, "radians", 1, 0},
+	"degrees": {"degrees", "deg", []string{"deg", "degrees"}, "radians", math.Pi / 180, 0},
 
+	// pressure
+	"pascal":                {"pascal", "Pa", []string{"Pa", "pascal"}, "pascal", 1, 0},
+	"bar":                   {"bar", "bar", []string{"bar"}, "bar", 100_000, 0},
+	"atmosphere":            {"atmosphere", "atm", []string{"atm", "atmosphere"}, "pascal", 101325, 0},
+	"millimeter_of_mercury": {"millimeter_of_mercury", "mmHg", []string{"millimeter_of_mercury", "mmHg"}, "pascal", float64(101325) / 760, 0},
 }
 
 func LoadUnitAliases() {
@@ -163,6 +170,12 @@ func (cu *CompositeUnit) Sort() {
 	})
 }
 
+func (cu *CompositeUnit) SortByName() {
+	sort.Slice(cu.UnitsList, func(i int, j int) bool {
+		return cu.UnitsList[i].Unit.DisplayValue < cu.UnitsList[j].Unit.DisplayValue
+	})
+}
+
 func (cu CompositeUnit) String() string {
 	cu.Sort()
 	s := ""
@@ -224,8 +237,8 @@ func CompositeUnitExponentiation(cu CompositeUnit, exp float64) CompositeUnit {
 }
 
 func CompositeUnitProduct(a CompositeUnit, b CompositeUnit) CompositeUnit {
-	a.Sort()
-	b.Sort()
+	a.SortByName()
+	b.SortByName()
 
 	product := CompositeUnit{UnitsList: []UnitExponent{}}
 	aIndex := 0
@@ -242,7 +255,10 @@ func CompositeUnitProduct(a CompositeUnit, b CompositeUnit) CompositeUnit {
 			unit := a.UnitsList[aIndex]
 			unit.Exponent = a.UnitsList[aIndex].Exponent + b.UnitsList[bIndex].Exponent
 
-			product.UnitsList = append(product.UnitsList, unit)
+			if unit.Exponent != 0 {
+				product.UnitsList = append(product.UnitsList, unit)
+			}
+
 			aIndex++
 			bIndex++
 		} else if a.UnitsList[aIndex].Unit.ID < b.UnitsList[bIndex].Unit.ID {
@@ -254,44 +270,12 @@ func CompositeUnitProduct(a CompositeUnit, b CompositeUnit) CompositeUnit {
 		}
 	}
 
-	return product
-}
-func CompositeUnitDivision(a CompositeUnit, b CompositeUnit) CompositeUnit {
-	a.Sort()
-	b.Sort()
-
-	product := CompositeUnit{UnitsList: []UnitExponent{}}
-	aIndex := 0
-	bIndex := 0
-
-	for aIndex < len(a.UnitsList) || bIndex < len(b.UnitsList) {
-		if aIndex == len(a.UnitsList) {
-			unit := b.UnitsList[bIndex]
-			unit.Exponent = -unit.Exponent
-			product.UnitsList = append(product.UnitsList, unit)
-			bIndex++
-		} else if bIndex == len(b.UnitsList) {
-			product.UnitsList = append(product.UnitsList, a.UnitsList[aIndex])
-			aIndex++
-		} else if a.UnitsList[aIndex].Unit.ID == b.UnitsList[bIndex].Unit.ID {
-			unit := a.UnitsList[aIndex]
-			unit.Exponent = a.UnitsList[aIndex].Exponent - b.UnitsList[bIndex].Exponent
-
-			product.UnitsList = append(product.UnitsList, a.UnitsList[aIndex])
-			aIndex++
-			bIndex++
-		} else if a.UnitsList[aIndex].Unit.ID < b.UnitsList[bIndex].Unit.ID {
-			product.UnitsList = append(product.UnitsList, a.UnitsList[aIndex])
-			aIndex++
-		} else {
-			unit := b.UnitsList[bIndex]
-			unit.Exponent = -unit.Exponent
-			product.UnitsList = append(product.UnitsList, unit)
-			bIndex++
-		}
-	}
-
 	product.Sort()
 
 	return product
+}
+func CompositeUnitDivision(a CompositeUnit, b CompositeUnit) CompositeUnit {
+	b = CompositeUnitExponentiation(b, -1)
+
+	return CompositeUnitProduct(a, b)
 }
