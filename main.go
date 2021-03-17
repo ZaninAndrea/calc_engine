@@ -20,6 +20,7 @@ func main() {
 	command := argsWithoutProg[0]
 
 	sourceCode := ""
+	LoadUnitAliases()
 
 	// if path is passed read file from path, otherwise
 	if len(argsWithoutProg) > 1 {
@@ -55,7 +56,13 @@ func main() {
 			} else if graph.Lines[i].IsEmpty() {
 				fmt.Println("X")
 			} else {
-				fmt.Printf("%f\n", roundToDecimal(graph.Lines[i].Value, 13))
+				unitString := graph.Lines[i].Unit.String()
+
+				if unitString != "" {
+					unitString = " " + unitString
+				}
+
+				fmt.Printf("%f%s\n", roundToDecimal(graph.Lines[i].Value, 13), unitString)
 			}
 		}
 	} else if command == "colorize" {

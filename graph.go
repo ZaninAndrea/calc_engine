@@ -15,6 +15,7 @@ type Line struct {
 	Dependencies []int
 	Value        float64
 	Ast          Ast
+	Unit         CompositeUnit
 	Error        error
 }
 
@@ -129,6 +130,18 @@ func tokenizer(source string, allowUnknown bool) ([]Token, error) {
 		}
 		if char == ':' {
 			tokens = append(tokens, Token{"definition", ":"})
+
+			current++
+			continue
+		}
+		if char == '[' {
+			tokens = append(tokens, Token{"bracket", "["})
+
+			current++
+			continue
+		}
+		if char == ']' {
+			tokens = append(tokens, Token{"bracket", "]"})
 
 			current++
 			continue
@@ -315,6 +328,42 @@ func parser(tokens []Token, variables map[string]int) (Ast, error) {
 
 	current := 0
 
+	walkUnit := func() (Ast, error) {
+		if current >= len(tokens) {
+			return Ast{}, fmt.Errorf("Line ends unexpectedly")
+		}
+
+		token := tokens[current]
+
+		if token.Kind == "number" {
+			current++
+
+			return Ast{Kind: "UnitNumberLiteral", Value: token.Value}, nil
+		}
+
+		// literals can be constants, variables or functions
+		if token.Kind == "literal" {
+			if val, ok := UnitAliasesMap[token.Value]; ok {
+				current++
+
+				return Ast{Kind: "FundamentalUnit", Value: val}, nil
+			}
+		}
+
+		if token.Kind == "operator" && token.Value == "^" {
+			current++
+
+			return Ast{Kind: "UnitExponent", Value: token.Value}, nil
+		}
+		if token.Kind == "operator" && token.Value == "/" {
+			current++
+
+			return Ast{Kind: "UnitDivision", Value: token.Value}, nil
+		}
+
+		return Ast{}, fmt.Errorf("Unrecognized unit syntax")
+	}
+
 	var walk func() (Ast, error)
 	walk = func() (Ast, error) {
 		if current >= len(tokens) {
@@ -347,7 +396,12 @@ func parser(tokens []Token, variables map[string]int) (Ast, error) {
 				if err != nil {
 					return Ast{}, err
 				}
-				ast.Params = append(ast.Params, content)
+
+				if content.Kind != "UnitExpression" {
+					ast.Params = append(ast.Params, content)
+				} else {
+					ast.Unit = content.Unit
+				}
 
 				if current >= len(tokens) {
 					return Ast{}, fmt.Errorf("Line ends unexpectedly")
@@ -357,6 +411,43 @@ func parser(tokens []Token, variables map[string]int) (Ast, error) {
 
 			current++
 
+			return ast, nil
+		}
+
+		// Match all the tokens inside the brackets
+		if token.Kind == "bracket" && token.Value == "[" {
+			current++
+
+			if current >= len(tokens) {
+				return Ast{}, fmt.Errorf("Line ends unexpectedly")
+			}
+
+			token = tokens[current]
+
+			ast := Ast{Kind: "UnitExpression", Params: []Ast{}}
+
+			for token.Kind != "bracket" || token.Value != "]" {
+				content, err := walkUnit()
+
+				if err != nil {
+					return Ast{}, err
+				}
+				ast.Params = append(ast.Params, content)
+
+				if current >= len(tokens) {
+					return Ast{}, fmt.Errorf("Line ends unexpectedly")
+				}
+				token = tokens[current]
+			}
+
+			unit, err := parseUnitAst(ast)
+
+			if err != nil {
+				return Ast{}, err
+			}
+			ast.Unit = unit
+
+			current++
 			return ast, nil
 		}
 
@@ -414,7 +505,12 @@ func parser(tokens []Token, variables map[string]int) (Ast, error) {
 		if err != nil {
 			return Ast{}, err
 		}
-		ast.Params = append(ast.Params, content)
+
+		if content.Kind != "UnitExpression" {
+			ast.Params = append(ast.Params, content)
+		} else {
+			ast.Unit = content.Unit
+		}
 	}
 
 	for _, operator := range []string{"^", "*", "/", "-", "+"} {
@@ -428,6 +524,56 @@ func parser(tokens []Token, variables map[string]int) (Ast, error) {
 	}
 
 	return *ast, nil
+}
+
+func parseUnitAst(ast Ast) (CompositeUnit, error) {
+	cu := CompositeUnit{}
+
+	// TODO: handle 1/s
+	// TODO: give error on m^2^3
+
+	exponentSign := float64(1)
+
+	curr := 0
+
+	for curr < len(ast.Params) {
+		token := ast.Params[curr]
+
+		if token.Kind == "FundamentalUnit" {
+			cu.UnitsList = append(cu.UnitsList, UnitExponent{UnitTable[token.Value], exponentSign})
+			curr++
+			continue
+		}
+
+		if token.Kind == "UnitDivision" && exponentSign == 1 {
+			exponentSign = -1
+
+			curr++
+			continue
+		}
+
+		if token.Kind == "UnitExponent" && len(cu.UnitsList) > 0 {
+			curr++
+
+			if curr < len(ast.Params) && ast.Params[curr].Kind == "UnitNumberLiteral" {
+				exp, err := strconv.ParseFloat(ast.Params[curr].Value, 64)
+
+				if err != nil {
+					return CompositeUnit{}, err
+				}
+
+				cu.UnitsList[len(cu.UnitsList)-1].Exponent = exp * exponentSign
+				curr++
+				continue
+			} else {
+				return CompositeUnit{}, fmt.Errorf("Failed to parse unit expression")
+			}
+		}
+
+		return CompositeUnit{}, fmt.Errorf("Failed to parse unit expression")
+	}
+
+	return cu, nil
 }
 
 func parseOperator(ast *Ast, operator string) (*Ast, error) {
@@ -536,18 +682,19 @@ func parseOperator(ast *Ast, operator string) (*Ast, error) {
 func (graph *ExecutionGraph) Execute() {
 	for _, line := range graph.ExecutionOrder {
 		if !graph.Lines[line].IsEmpty() && !graph.Lines[line].HasError() {
-			val, err := executeAst(&graph.Lines[line].Ast, graph)
+			val, unit, err := executeAst(&graph.Lines[line].Ast, graph)
 
 			if err != nil {
 				graph.Lines[line].Error = err
 			} else {
 				graph.Lines[line].Value = val
+				graph.Lines[line].Unit = unit
 			}
 		}
 	}
 }
 
-func executeAst(ast *Ast, graph *ExecutionGraph) (float64, error) {
+func executeAst(ast *Ast, graph *ExecutionGraph) (float64, CompositeUnit, error) {
 	if ast.Kind == "NumberLiteral" {
 		raw := ast.Value
 		raw = strings.ReplaceAll(raw, ".", "")
@@ -562,26 +709,26 @@ func executeAst(ast *Ast, graph *ExecutionGraph) (float64, error) {
 		val, err := strconv.ParseFloat(raw, 64)
 
 		if err != nil {
-			return 0, fmt.Errorf("Invalid number literal")
+			return 0, CompositeUnit{}, fmt.Errorf("Invalid number literal")
 		}
 
 		if isPercentage {
 			val /= 100
 		}
 
-		return val, nil
+		return val, CompositeUnit{}, nil
 	}
 
 	if ast.Kind == "Variable" {
 		line, _ := graph.Variables[ast.Value]
 
 		if graph.Lines[line].IsEmpty() {
-			return 0, fmt.Errorf("Referring to a variable defined by empty expression")
+			return 0, CompositeUnit{}, fmt.Errorf("Referring to a variable defined by empty expression")
 		} else if graph.Lines[line].HasError() {
-			return 0, fmt.Errorf("Referring to a variable whose definition has an error")
+			return 0, CompositeUnit{}, fmt.Errorf("Referring to a variable whose definition has an error")
 		}
 
-		return graph.Lines[line].Value, nil
+		return graph.Lines[line].Value, graph.Lines[line].Unit, nil
 	}
 
 	if ast.Kind == "Expression" {
@@ -589,63 +736,92 @@ func executeAst(ast *Ast, graph *ExecutionGraph) (float64, error) {
 			panic("Cannot evaluate empty expression")
 		}
 
-		return executeAst(&ast.Params[0], graph)
+		val, unit, err := executeAst(&ast.Params[0], graph)
+
+		if err != nil {
+			return val, unit, err
+		}
+
+		if ast.Unit.IsEmpty() {
+			return val, unit, nil
+		}
+
+		if unit.IsEmpty() {
+			return val, ast.Unit, nil
+		}
+
+		val, err = ConvertCompositeUnits(val, unit, ast.Unit)
+		return val, ast.Unit, err
 	}
 
 	if ast.Kind == "Operator" {
-		firstValue, err1 := executeAst(&ast.Params[0], graph)
-		secondValue, err2 := executeAst(&ast.Params[1], graph)
+		firstValue, unit1, err1 := executeAst(&ast.Params[0], graph)
+		secondValue, unit2, err2 := executeAst(&ast.Params[1], graph)
 
 		if err1 != nil {
-			return 0, err1
+			return 0, CompositeUnit{}, err1
 		} else if err2 != nil {
-			return 0, err2
+			return 0, CompositeUnit{}, err2
 		}
 
 		switch ast.Value {
 		case "+":
-			return firstValue + secondValue, nil
+			secondValueConverted, err := ConvertCompositeUnits(secondValue, unit2, unit1)
+			if err != nil {
+				return 0, CompositeUnit{}, err
+			}
+
+			return firstValue + secondValueConverted, unit1, nil
 		case "-":
-			return firstValue - secondValue, nil
+			secondValueConverted, err := ConvertCompositeUnits(secondValue, unit2, unit1)
+			if err != nil {
+				return 0, CompositeUnit{}, err
+			}
+
+			return firstValue - secondValueConverted, CompositeUnit{}, nil
 		case "*":
-			return firstValue * secondValue, nil
+			return firstValue * secondValue, CompositeUnitProduct(unit1, unit2), nil
 		case "/":
-			return firstValue / secondValue, nil
+			return firstValue / secondValue, CompositeUnitDivision(unit1, unit2), nil
 		case "^":
-			return math.Pow(firstValue, secondValue), nil
+			if !unit2.IsEmpty() {
+				return 0, CompositeUnit{}, fmt.Errorf("Exponent must be a number with no unit")
+			}
+
+			return math.Pow(firstValue, secondValue), CompositeUnitExponentiation(unit1, secondValue), nil
 		default:
 			panic("Unknown operation")
 		}
 	}
 
 	if ast.Kind == "Function" {
-		value, err := executeAst(&ast.Params[0], graph)
+		value, unit, err := executeAst(&ast.Params[0], graph)
 
 		if err != nil {
-			return 0, err
+			return 0, CompositeUnit{}, err
 		}
 
 		switch ast.Value {
 		case "sqrt":
-			return math.Sqrt(value), nil
+			return math.Sqrt(value), unit, nil
 		case "log":
-			return math.Log10(value), nil
+			return math.Log10(value), unit, nil
 		case "ln":
-			return math.Log(value), nil
+			return math.Log(value), unit, nil
 		case "sin":
-			return math.Sin(value), nil
+			return math.Sin(value), unit, nil
 		case "cos":
-			return math.Cos(value), nil
+			return math.Cos(value), unit, nil
 		case "tan":
-			return math.Tan(value), nil
+			return math.Tan(value), unit, nil
 		case "abs":
-			return math.Abs(value), nil
+			return math.Abs(value), unit, nil
 		case "round":
-			return math.Round(value), nil
+			return math.Round(value), unit, nil
 		case "ceil":
-			return math.Ceil(value), nil
+			return math.Ceil(value), unit, nil
 		case "floor":
-			return math.Floor(value), nil
+			return math.Floor(value), unit, nil
 		default:
 			panic("Unknown function")
 		}
@@ -654,9 +830,9 @@ func executeAst(ast *Ast, graph *ExecutionGraph) (float64, error) {
 	if ast.Kind == "Constant" {
 		switch ast.Value {
 		case "pi":
-			return math.Pi, nil
+			return math.Pi, CompositeUnit{}, nil
 		case "e":
-			return math.E, nil
+			return math.E, CompositeUnit{}, nil
 		default:
 			panic("Unknown constant")
 		}
@@ -673,19 +849,28 @@ func (graph *ExecutionGraph) ColorizedHTML() string {
 
 	for _, line := range graph.Lines {
 		colorizedLine := ""
+		insideUnitTag := ""
 
 		for _, token := range line.RawTokens {
+			if token.Kind == "bracket" && token.Value == "[" {
+				insideUnitTag = "-unit"
+			}
+
 			if token.Kind != "literal" {
-				colorizedLine += fmt.Sprintf(`<span class="calc-token-%s">%s</span>`, token.Kind, token.Value)
+				colorizedLine += fmt.Sprintf(`<span class="calc-token-%s">%s</span>`, token.Kind+insideUnitTag, token.Value)
 			} else {
 				switch {
 				case containsString(functions, token.Value):
-					colorizedLine += fmt.Sprintf(`<span class="calc-token-%s">%s</span>`, "function", token.Value)
+					colorizedLine += fmt.Sprintf(`<span class="calc-token-%s">%s</span>`, "function"+insideUnitTag, token.Value)
 				case containsString(constants, token.Value):
-					colorizedLine += fmt.Sprintf(`<span class="calc-token-%s">%s</span>`, "constant", token.Value)
+					colorizedLine += fmt.Sprintf(`<span class="calc-token-%s">%s</span>`, "constant"+insideUnitTag, token.Value)
 				default:
-					colorizedLine += fmt.Sprintf(`<span class="calc-token-%s">%s</span>`, "literal", token.Value)
+					colorizedLine += fmt.Sprintf(`<span class="calc-token-%s">%s</span>`, "literal"+insideUnitTag, token.Value)
 				}
+			}
+
+			if token.Kind == "bracket" && token.Value == "]" {
+				insideUnitTag = ""
 			}
 		}
 

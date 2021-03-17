@@ -9,6 +9,7 @@ type Ast struct {
 	Kind   string
 	Value  string
 	Params []Ast
+	Unit   CompositeUnit
 }
 
 func (ast Ast) String() string {
