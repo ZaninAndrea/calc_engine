@@ -801,9 +801,11 @@ func executeAst(ast *Ast, graph *ExecutionGraph) (float64, CompositeUnit, error)
 
 			return firstValue - secondValueConverted, CompositeUnit{}, nil
 		case "*":
-			return firstValue * secondValue, CompositeUnitProduct(unit1, unit2), nil
+			val, unit := CompositeUnitProduct(firstValue, secondValue, unit1, unit2)
+			return val, unit, nil
 		case "/":
-			return firstValue / secondValue, CompositeUnitDivision(unit1, unit2), nil
+			val, unit := CompositeUnitDivision(firstValue, secondValue, unit1, unit2)
+			return val, unit, nil
 		case "^":
 			if !unit2.IsEmpty() {
 				return 0, CompositeUnit{}, fmt.Errorf("Exponent must be a number with no unit")

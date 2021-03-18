@@ -91,6 +91,30 @@ var UnitTable map[string]FundamentalUnit = map[string]FundamentalUnit{
 	"bar":                   {"bar", "bar", []string{"bar"}, "bar", 100_000, 0},
 	"atmosphere":            {"atmosphere", "atm", []string{"atm", "atmosphere"}, "pascal", 101325, 0},
 	"millimeter_of_mercury": {"millimeter_of_mercury", "mmHg", []string{"millimeter_of_mercury", "mmHg"}, "pascal", float64(101325) / 760, 0},
+
+	// Data
+	"bit":      {"bit", "bit", []string{"b", "bit"}, "bit", 1, 0},
+	"byte":     {"byte", "B", []string{"B", "byte"}, "bit", 8, 0},
+	"kilobit":  {"kilobit", "kbit", []string{"kbit", "kb", "kilobit"}, "bit", math.Pow10(3), 0},
+	"kibibit":  {"kibibit", "Kibit", []string{"Kib", "Kibit", "kibibit"}, "bit", (1 << 10), 0},
+	"kilobyte": {"kilobyte", "kB", []string{"kB", "kilobyte"}, "bit", 8 * math.Pow10(3), 0},
+	"kibibyte": {"kibibyte", "KiB", []string{"KiB", "kibibyte"}, "bit", 8 * (1 << 10), 0},
+	"megabit":  {"megabit", "Mbit", []string{"Mbit", "megabit"}, "bit", math.Pow10(6), 0},
+	"mebibit":  {"mebibit", "Mibit", []string{"Mibit", "mebibit"}, "bit", (1 << 20), 0},
+	"megabyte": {"megabyte", "MB", []string{"MB", "megabyte"}, "bit", 8 * math.Pow10(6), 0},
+	"mebibyte": {"mebibyte", "MiB", []string{"MiB", "mebibyte"}, "bit", 8 * (1 << 20), 0},
+	"gigabit":  {"gigabit", "Gbit", []string{"Gbit", "gigabit"}, "bit", math.Pow10(9), 0},
+	"gibibit":  {"gibibit", "Gibit", []string{"Gibit", "gibibit"}, "bit", (1 << 30), 0},
+	"gigabyte": {"gigabyte", "GB", []string{"GB", "gigabyte"}, "bit", 8 * math.Pow10(9), 0},
+	"gibibyte": {"gibibyte", "GiB", []string{"GiB", "gibibyte"}, "bit", 8 * (1 << 30), 0},
+	"terabit":  {"terabit", "Tbit", []string{"Tbit", "terabit"}, "bit", math.Pow10(12), 0},
+	"tebibit":  {"tebibit", "Tibit", []string{"Tibit", "tibibit"}, "bit", (1 << 40), 0},
+	"terabyte": {"terabyte", "TB", []string{"TB", "terabyte"}, "bit", 8 * math.Pow10(12), 0},
+	"tebibyte": {"tebibyte", "TiB", []string{"TiB", "tibibyte"}, "bit", 8 * (1 << 40), 0},
+	"petabit":  {"petabit", "Pbit", []string{"Pbit", "petabit"}, "bit", math.Pow10(15), 0},
+	"pebibit":  {"pebibit", "Pibit", []string{"Pibit", "pebibit"}, "bit", (1 << 50), 0},
+	"petabyte": {"petabyte", "PB", []string{"PB", "petabyte"}, "bit", 8 * math.Pow10(15), 0},
+	"pebibyte": {"pebibyte", "PiB", []string{"PiB", "pebibyte"}, "bit", 8 * (1 << 50), 0},
 }
 
 func LoadUnitAliases() {
@@ -170,9 +194,9 @@ func (cu *CompositeUnit) Sort() {
 	})
 }
 
-func (cu *CompositeUnit) SortByName() {
+func (cu *CompositeUnit) SortByBaseUnitName() {
 	sort.Slice(cu.UnitsList, func(i int, j int) bool {
-		return cu.UnitsList[i].Unit.DisplayValue < cu.UnitsList[j].Unit.DisplayValue
+		return cu.UnitsList[i].Unit.BaseUnit < cu.UnitsList[j].Unit.BaseUnit
 	})
 }
 
@@ -236,13 +260,14 @@ func CompositeUnitExponentiation(cu CompositeUnit, exp float64) CompositeUnit {
 	return newUnit
 }
 
-func CompositeUnitProduct(a CompositeUnit, b CompositeUnit) CompositeUnit {
-	a.SortByName()
-	b.SortByName()
+func CompositeUnitProduct(valueA float64, valueB float64, a CompositeUnit, b CompositeUnit) (float64, CompositeUnit) {
+	a.SortByBaseUnitName()
+	b.SortByBaseUnitName()
 
 	product := CompositeUnit{UnitsList: []UnitExponent{}}
 	aIndex := 0
 	bIndex := 0
+	value := valueA * valueB
 
 	for aIndex < len(a.UnitsList) || bIndex < len(b.UnitsList) {
 		if aIndex == len(a.UnitsList) {
@@ -251,9 +276,16 @@ func CompositeUnitProduct(a CompositeUnit, b CompositeUnit) CompositeUnit {
 		} else if bIndex == len(b.UnitsList) {
 			product.UnitsList = append(product.UnitsList, a.UnitsList[aIndex])
 			aIndex++
-		} else if a.UnitsList[aIndex].Unit.ID == b.UnitsList[bIndex].Unit.ID {
+		} else if AreUnitsCompatible(a.UnitsList[aIndex].Unit, b.UnitsList[bIndex].Unit) {
 			unit := a.UnitsList[aIndex]
 			unit.Exponent = a.UnitsList[aIndex].Exponent + b.UnitsList[bIndex].Exponent
+
+			value = ConvertFundamentalUnits(
+				value,
+				b.UnitsList[bIndex].Unit,
+				a.UnitsList[aIndex].Unit,
+				b.UnitsList[bIndex].Exponent,
+			)
 
 			if unit.Exponent != 0 {
 				product.UnitsList = append(product.UnitsList, unit)
@@ -261,7 +293,7 @@ func CompositeUnitProduct(a CompositeUnit, b CompositeUnit) CompositeUnit {
 
 			aIndex++
 			bIndex++
-		} else if a.UnitsList[aIndex].Unit.ID < b.UnitsList[bIndex].Unit.ID {
+		} else if a.UnitsList[aIndex].Unit.BaseUnit < b.UnitsList[bIndex].Unit.BaseUnit {
 			product.UnitsList = append(product.UnitsList, a.UnitsList[aIndex])
 			aIndex++
 		} else {
@@ -272,10 +304,10 @@ func CompositeUnitProduct(a CompositeUnit, b CompositeUnit) CompositeUnit {
 
 	product.Sort()
 
-	return product
+	return value, product
 }
-func CompositeUnitDivision(a CompositeUnit, b CompositeUnit) CompositeUnit {
+func CompositeUnitDivision(valueA float64, valueB float64, a CompositeUnit, b CompositeUnit) (float64, CompositeUnit) {
 	b = CompositeUnitExponentiation(b, -1)
 
-	return CompositeUnitProduct(a, b)
+	return CompositeUnitProduct(valueA, 1/valueB, a, b)
 }
