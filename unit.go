@@ -16,7 +16,6 @@ type FundamentalUnit struct {
 	ConversionShift  float64
 }
 
-// TODO: load currency conversion rates
 var UnitAliasesMap map[string]string = map[string]string{}
 var UnitTable map[string]FundamentalUnit = map[string]FundamentalUnit{
 	// metric lengths
@@ -80,7 +79,7 @@ var UnitTable map[string]FundamentalUnit = map[string]FundamentalUnit{
 	"usd": {"usd", "$", []string{"$", "usd", "USD"}, "eur", 0.84, 0},
 	"gbp": {"gbp", "£", []string{"£", "gbp", "GBP"}, "eur", 1.17, 0},
 	"cny": {"cny", "¥", []string{"cny", "CNY"}, "eur", 0.13, 0},
-	"cad": {"cad", "CAD", []string{"cad", "CAD"}, "eur", 1.17, 0},
+	"cad": {"cad", "CAD", []string{"cad", "CAD"}, "eur", 0.67, 0},
 
 	// degrees
 	"radians": {"radians", "rad", []string{"rad", "radians"}, "radians", 1, 0},

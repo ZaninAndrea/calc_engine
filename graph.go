@@ -927,3 +927,24 @@ func (graph *ExecutionGraph) ColorizedHTML() string {
 
 	return strings.Join(colorizedLines, "<br/>")
 }
+
+func (graph *ExecutionGraph) ExecutionResult() string {
+	result := ""
+	for i := range graph.Lines {
+		if graph.Lines[i].HasError() {
+			result += "!\n"
+		} else if graph.Lines[i].IsEmpty() {
+			result += "X\n"
+		} else {
+			unitString := graph.Lines[i].Unit.String()
+
+			if unitString != "" {
+				unitString = " " + unitString
+			}
+
+			result += fmt.Sprintf("%f%s\n", roundToDecimal(graph.Lines[i].Value, 13), unitString)
+		}
+	}
+
+	return result[:len(result)-1]
+}
