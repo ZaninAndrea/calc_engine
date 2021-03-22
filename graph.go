@@ -799,7 +799,7 @@ func executeAst(ast *Ast, graph *ExecutionGraph) (float64, CompositeUnit, error)
 				return 0, CompositeUnit{}, err
 			}
 
-			return firstValue - secondValueConverted, CompositeUnit{}, nil
+			return firstValue - secondValueConverted, unit1, nil
 		case "*":
 			val, unit := CompositeUnitProduct(firstValue, secondValue, unit1, unit2)
 			return val, unit, nil
@@ -932,7 +932,7 @@ func (graph *ExecutionGraph) ExecutionResult() string {
 	result := ""
 	for i := range graph.Lines {
 		if graph.Lines[i].HasError() {
-			result += "!\n"
+			result += fmt.Sprintf("! %s\n", graph.Lines[i].Error)
 		} else if graph.Lines[i].IsEmpty() {
 			result += "X\n"
 		} else {

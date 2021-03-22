@@ -27,7 +27,7 @@ func main() {
 
 	if command == "server" {
 		gin.SetMode(gin.ReleaseMode)
-		r := gin.New()
+		r := gin.Default()
 
 		r.POST("/execute", func(c *gin.Context) {
 			raw_body, err := ioutil.ReadAll(c.Request.Body)
