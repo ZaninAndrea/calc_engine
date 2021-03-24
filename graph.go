@@ -162,6 +162,14 @@ func tokenizer(source string, allowUnknown bool) ([]Token, error) {
 		if char == '"' {
 			value := ""
 			current++
+			if current >= len(source) {
+				if allowUnknown {
+					tokens = append(tokens, Token{"string", value})
+					continue
+				}
+				return nil, fmt.Errorf("unterminated string")
+			}
+
 			char = source[current]
 
 			for char != '"' {
@@ -169,6 +177,9 @@ func tokenizer(source string, allowUnknown bool) ([]Token, error) {
 				current++
 
 				if current >= len(source) {
+					if allowUnknown {
+						break
+					}
 					return nil, fmt.Errorf("unterminated string")
 				}
 
@@ -948,7 +959,7 @@ func executeAst(ast *Ast, graph *ExecutionGraph) (float64, CompositeUnit, error)
 			}
 
 			url := "https://v1.igloo.ooo/graphql"
-			query := fmt.Sprintf("{\"query\":\"{floatVariable(id: \\\"%s\\\"){value}}\"}", ast.Params[0].Value)
+			query := fmt.Sprintf("{\"query\":\"{floatVariable(id: \\\"%s\\\"){unitOfMeasurement value}}\"}", ast.Params[0].Value)
 			payload := strings.NewReader(query)
 
 			req, _ := http.NewRequest("POST", url, payload)
@@ -962,13 +973,14 @@ func executeAst(ast *Ast, graph *ExecutionGraph) (float64, CompositeUnit, error)
 			var parsedBody struct {
 				Data struct {
 					FloatVariable struct {
-						Value float64
+						UnitOfMeasurement string
+						Value             float64
 					}
 				}
 			}
 
 			json.Unmarshal(body, &parsedBody)
-			return parsedBody.Data.FloatVariable.Value, CompositeUnit{}, nil
+			return parsedBody.Data.FloatVariable.Value, CompositeUnitFromString(parsedBody.Data.FloatVariable.UnitOfMeasurement), nil
 		case "floatSeries":
 			if len(ast.Params) == 0 || ast.Params[0].Kind != "String" {
 				return 0, CompositeUnit{}, fmt.Errorf("You must pass an ID to the floatSeries method")
@@ -980,7 +992,7 @@ func executeAst(ast *Ast, graph *ExecutionGraph) (float64, CompositeUnit, error)
 
 			if len(ast.Params) == 1 {
 				url := "https://v1.igloo.ooo/graphql"
-				query := fmt.Sprintf("{\"query\":\"{floatSeriesVariable(id: \\\"%s\\\"){lastNode{value}}}\"}", ast.Params[0].Value)
+				query := fmt.Sprintf("{\"query\":\"{floatSeriesVariable(id: \\\"%s\\\"){unitOfMeasurement lastNode{value}}}\"}", ast.Params[0].Value)
 				payload := strings.NewReader(query)
 
 				req, _ := http.NewRequest("POST", url, payload)
@@ -994,7 +1006,8 @@ func executeAst(ast *Ast, graph *ExecutionGraph) (float64, CompositeUnit, error)
 				var parsedBody struct {
 					Data struct {
 						FloatSeriesVariable struct {
-							LastNode struct {
+							UnitOfMeasurement string
+							LastNode          struct {
 								Value float64
 							}
 						}
@@ -1002,7 +1015,7 @@ func executeAst(ast *Ast, graph *ExecutionGraph) (float64, CompositeUnit, error)
 				}
 
 				json.Unmarshal(body, &parsedBody)
-				return parsedBody.Data.FloatSeriesVariable.LastNode.Value, CompositeUnit{}, nil
+				return parsedBody.Data.FloatSeriesVariable.LastNode.Value, CompositeUnitFromString(parsedBody.Data.FloatSeriesVariable.UnitOfMeasurement), nil
 			} else {
 				offset, _, err := executeAst(&ast.Params[1], graph)
 
@@ -1011,7 +1024,7 @@ func executeAst(ast *Ast, graph *ExecutionGraph) (float64, CompositeUnit, error)
 				}
 
 				url := "https://v1.igloo.ooo/graphql"
-				query := fmt.Sprintf("{\"query\":\"{floatSeriesVariable(id: \\\"%s\\\"){nodes(limit:1, offset:%d){value}}}\"}", ast.Params[0].Value, int(offset))
+				query := fmt.Sprintf("{\"query\":\"{floatSeriesVariable(id: \\\"%s\\\"){unitOfMeasurement nodes(limit:1, offset:%d){value}}}\"}", ast.Params[0].Value, int(offset))
 				payload := strings.NewReader(query)
 
 				req, _ := http.NewRequest("POST", url, payload)
@@ -1025,7 +1038,8 @@ func executeAst(ast *Ast, graph *ExecutionGraph) (float64, CompositeUnit, error)
 				var parsedBody struct {
 					Data struct {
 						FloatSeriesVariable struct {
-							Nodes []struct {
+							UnitOfMeasurement string
+							Nodes             []struct {
 								Value float64
 							}
 						}
@@ -1037,7 +1051,7 @@ func executeAst(ast *Ast, graph *ExecutionGraph) (float64, CompositeUnit, error)
 					return 0, CompositeUnit{}, nil
 				}
 
-				return parsedBody.Data.FloatSeriesVariable.Nodes[0].Value, CompositeUnit{}, nil
+				return parsedBody.Data.FloatSeriesVariable.Nodes[0].Value, CompositeUnitFromString(parsedBody.Data.FloatSeriesVariable.UnitOfMeasurement), nil
 			}
 		}
 	}
@@ -1071,7 +1085,9 @@ func (graph *ExecutionGraph) ColorizedHTML() string {
 				insideUnitTag = "-unit"
 			}
 
-			if token.Kind != "literal" {
+			if token.Kind == "string" {
+				colorizedLine += fmt.Sprintf(`<span class="calc-token-string">"%s"</span>`, token.Value)
+			} else if token.Kind != "literal" {
 				colorizedLine += fmt.Sprintf(`<span class="calc-token-%s">%s</span>`, token.Kind+insideUnitTag, token.Value)
 			} else {
 				switch {

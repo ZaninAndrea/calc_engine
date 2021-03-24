@@ -310,3 +310,11 @@ func CompositeUnitDivision(valueA float64, valueB float64, a CompositeUnit, b Co
 
 	return CompositeUnitProduct(valueA, 1/valueB, a, b)
 }
+
+func CompositeUnitFromString(unit string) CompositeUnit {
+	if unitId, ok := UnitAliasesMap[unit]; ok {
+		return CompositeUnit{UnitsList: []UnitExponent{{Unit: UnitTable[unitId], Exponent: 1}}}
+	}
+
+	return CompositeUnit{}
+}
