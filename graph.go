@@ -154,6 +154,29 @@ func tokenizer(source string, allowUnknown bool) ([]Token, error) {
 			continue
 		}
 
+		// match a string
+		if char == '"' {
+			value := ""
+			current++
+			char = source[current]
+
+			for char != '"' {
+				value += string(char)
+				current++
+
+				if current >= len(source) {
+					return nil, fmt.Errorf("unterminated string")
+				}
+
+				char = source[current]
+			}
+
+			current++
+			tokens = append(tokens, Token{"string", value})
+
+			continue
+		}
+
 		// match a number
 		if containsByte(digits, char) {
 			value := ""
@@ -324,6 +347,7 @@ func recTopologicalOrder(graph *ExecutionGraph, line int, order *[]int, visited 
 
 func parser(tokens []Token, variables map[string]int) (Ast, error) {
 	functions := []string{"sqrt", "log", "ln", "sin", "cos", "tan", "abs", "ln", "round", "ceil", "floor"}
+	methods := []string{"ascii"}
 	constants := []string{"pi", "e"}
 
 	current := 0
@@ -380,6 +404,12 @@ func parser(tokens []Token, variables map[string]int) (Ast, error) {
 			current++
 
 			return Ast{Kind: "NumberLiteral", Value: token.Value}, nil
+		}
+
+		if token.Kind == "string" {
+			current++
+
+			return Ast{Kind: "String", Value: token.Value}, nil
 		}
 
 		// Match all the tokens inside the parenthesis
@@ -489,6 +519,33 @@ func parser(tokens []Token, variables map[string]int) (Ast, error) {
 				ast.Params = []Ast{content}
 
 				return ast, nil
+			}
+
+			if containsString(methods, token.Value) {
+				ast := Ast{Kind: "Method", Value: token.Value}
+
+				current++
+
+				if current >= len(tokens) {
+					return Ast{}, fmt.Errorf("Line ends unexpectedly")
+				}
+
+				token = tokens[current]
+
+				content, err := walk()
+
+				if err != nil {
+					return Ast{}, err
+				}
+
+				if content.Kind == "Expression" {
+					ast.Params = content.Params
+				} else {
+					ast.Params = []Ast{content}
+				}
+
+				return ast, nil
+
 			}
 		}
 
@@ -696,6 +753,10 @@ func parseOperator(ast *Ast, operator string) (*Ast, error) {
 		return ast, nil
 	}
 
+	if ast.Kind == "Method" {
+		return ast, nil
+	}
+
 	panic("Unrecognized AST")
 }
 
@@ -872,6 +933,17 @@ func executeAst(ast *Ast, graph *ExecutionGraph) (float64, CompositeUnit, error)
 			return math.Floor(value), unit, nil
 		default:
 			panic("Unknown function")
+		}
+	}
+
+	if ast.Kind == "Method" {
+		switch ast.Value {
+		case "ascii":
+			if len(ast.Params) == 0 || ast.Params[0].Kind != "String" {
+				return 0, CompositeUnit{}, fmt.Errorf("You must pass a string to the ascii method")
+			}
+
+			return float64(int(ast.Params[0].Value[0])), CompositeUnit{}, nil
 		}
 	}
 

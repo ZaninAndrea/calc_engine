@@ -1,11 +1,1 @@
-# Patrimonio del nonno
-contanti: 60.000 [eur]
-casa: 800.000 [eur]
-patrimonio: contanti + casa
-
-# Disposizioni del nonno
-assegnati_Luca: 65.000 [eur]
-assegnati_Paolo: 47.000 [eur]
-assegnati_Nicola: 36.000 [eur]
-
-patrimonio_rimanente: patrimonio - assegnati_Luca - assegnati_Paolo - assegnati_Nicola
+ascii("a")
