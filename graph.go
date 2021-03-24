@@ -1,8 +1,11 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"math"
+	"net/http"
 	"strconv"
 	"strings"
 )
@@ -35,6 +38,7 @@ type ExecutionGraph struct {
 	Variables      map[string]int // map from variable to the corresponding line
 	ExecutionOrder []int
 	SourceCode     string
+	Bearer         string
 }
 
 // ParseCode parses a sourcecode into an ExecutionGraph
@@ -102,11 +106,11 @@ func tokenizer(source string, allowUnknown bool) ([]Token, error) {
 			break
 		}
 
-		// skip whitespace
-		if char == ' ' || char == '\t' {
+		// skip whitespace and commas
+		if char == ' ' || char == '\t' || char == ',' {
 			val := ""
 
-			for current < len(source) && (source[current] == ' ' || source[current] == '\t') {
+			for current < len(source) && (source[current] == ' ' || source[current] == '\t' || source[current] == ',') {
 				val += string(source[current])
 				current++
 			}
@@ -347,7 +351,7 @@ func recTopologicalOrder(graph *ExecutionGraph, line int, order *[]int, visited 
 
 func parser(tokens []Token, variables map[string]int) (Ast, error) {
 	functions := []string{"sqrt", "log", "ln", "sin", "cos", "tan", "abs", "ln", "round", "ceil", "floor"}
-	methods := []string{"ascii"}
+	methods := []string{"floatVariable", "floatSeries"}
 	constants := []string{"pi", "e"}
 
 	current := 0
@@ -938,12 +942,103 @@ func executeAst(ast *Ast, graph *ExecutionGraph) (float64, CompositeUnit, error)
 
 	if ast.Kind == "Method" {
 		switch ast.Value {
-		case "ascii":
+		case "floatVariable":
 			if len(ast.Params) == 0 || ast.Params[0].Kind != "String" {
-				return 0, CompositeUnit{}, fmt.Errorf("You must pass a string to the ascii method")
+				return 0, CompositeUnit{}, fmt.Errorf("You must pass an ID to the floatVariable method")
 			}
 
-			return float64(int(ast.Params[0].Value[0])), CompositeUnit{}, nil
+			url := "https://v1.igloo.ooo/graphql"
+			query := fmt.Sprintf("{\"query\":\"{floatVariable(id: \\\"%s\\\"){value}}\"}", ast.Params[0].Value)
+			payload := strings.NewReader(query)
+
+			req, _ := http.NewRequest("POST", url, payload)
+			req.Header.Add("Content-Type", "application/json")
+			req.Header.Add("Authorization", "Bearer "+graph.Bearer)
+
+			res, _ := http.DefaultClient.Do(req)
+			defer res.Body.Close()
+			body, _ := ioutil.ReadAll(res.Body)
+
+			var parsedBody struct {
+				Data struct {
+					FloatVariable struct {
+						Value float64
+					}
+				}
+			}
+
+			json.Unmarshal(body, &parsedBody)
+			return parsedBody.Data.FloatVariable.Value, CompositeUnit{}, nil
+		case "floatSeries":
+			if len(ast.Params) == 0 || ast.Params[0].Kind != "String" {
+				return 0, CompositeUnit{}, fmt.Errorf("You must pass an ID to the floatSeries method")
+			}
+
+			if len(ast.Params) > 2 {
+				return 0, CompositeUnit{}, fmt.Errorf("Too many parameters passed to floatSeries")
+			}
+
+			if len(ast.Params) == 1 {
+				url := "https://v1.igloo.ooo/graphql"
+				query := fmt.Sprintf("{\"query\":\"{floatSeriesVariable(id: \\\"%s\\\"){lastNode{value}}}\"}", ast.Params[0].Value)
+				payload := strings.NewReader(query)
+
+				req, _ := http.NewRequest("POST", url, payload)
+				req.Header.Add("Content-Type", "application/json")
+				req.Header.Add("Authorization", "Bearer "+graph.Bearer)
+
+				res, _ := http.DefaultClient.Do(req)
+				defer res.Body.Close()
+				body, _ := ioutil.ReadAll(res.Body)
+
+				var parsedBody struct {
+					Data struct {
+						FloatSeriesVariable struct {
+							LastNode struct {
+								Value float64
+							}
+						}
+					}
+				}
+
+				json.Unmarshal(body, &parsedBody)
+				return parsedBody.Data.FloatSeriesVariable.LastNode.Value, CompositeUnit{}, nil
+			} else {
+				offset, _, err := executeAst(&ast.Params[1], graph)
+
+				if err != nil {
+					return 0, CompositeUnit{}, err
+				}
+
+				url := "https://v1.igloo.ooo/graphql"
+				query := fmt.Sprintf("{\"query\":\"{floatSeriesVariable(id: \\\"%s\\\"){nodes(limit:1, offset:%d){value}}}\"}", ast.Params[0].Value, int(offset))
+				payload := strings.NewReader(query)
+
+				req, _ := http.NewRequest("POST", url, payload)
+				req.Header.Add("Content-Type", "application/json")
+				req.Header.Add("Authorization", "Bearer "+graph.Bearer)
+
+				res, _ := http.DefaultClient.Do(req)
+				defer res.Body.Close()
+				body, _ := ioutil.ReadAll(res.Body)
+
+				var parsedBody struct {
+					Data struct {
+						FloatSeriesVariable struct {
+							Nodes []struct {
+								Value float64
+							}
+						}
+					}
+				}
+				json.Unmarshal(body, &parsedBody)
+
+				if len(parsedBody.Data.FloatSeriesVariable.Nodes) == 0 {
+					return 0, CompositeUnit{}, nil
+				}
+
+				return parsedBody.Data.FloatSeriesVariable.Nodes[0].Value, CompositeUnit{}, nil
+			}
 		}
 	}
 

@@ -30,6 +30,7 @@ func main() {
 		r := gin.Default()
 
 		r.POST("/execute", func(c *gin.Context) {
+			bearer := c.DefaultQuery("bearer", "")
 			raw_body, err := ioutil.ReadAll(c.Request.Body)
 
 			if err != nil {
@@ -42,6 +43,7 @@ func main() {
 
 			fmt.Println(string(raw_body))
 			graph := ParseCode(string(raw_body))
+			graph.Bearer = bearer
 			graph.Execute()
 			c.String(200, graph.ExecutionResult())
 		})
@@ -121,6 +123,7 @@ func main() {
 
 		if command == "execute" {
 			graph := ParseCode(sourceCode)
+			graph.Bearer = os.Getenv("IGLOO_BEARER")
 			graph.Execute()
 
 			fmt.Println(graph.ExecutionResult())
